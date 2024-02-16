@@ -62,21 +62,15 @@ def _rewire_based_on_rcorr(prev_edges, rcorr, n_appositions, delay_model, struct
     rcorr_by_appositions = rcorr.groupby(n_appositions)
     log.debug("Reassigning connections")
     out_conns = []
-
     for n_app, conns in previous_conns.groupby(n_appositions):
-        connections = conns.reset_index().sort_values('conductance')
-        connections[['previous_source', 'previous_target']] = connections[
-            ['@source_node', '@target_node']
-        ].copy()
-        if not all(connections['nsyn'] <= n_app):
-            print(connections)
+        if not all(conns['nsyn'] <= n_app):
+            print(conns)
             import pdb; pdb.set_trace()
             raise ValueError("structural impossibility")
-        sorted_response_correlation = rcorr_by_appositions.get_group(n_app).sort_values()
-        to_connect = sorted_response_correlation.iloc[:len(connections)].reset_index()
-        connections[['@source_node', '@target_node']] =\
-            to_connect[['@source_node', '@target_node']].values
+
+        connections = _assign_connections(conns, rcorr_by_appositions.get_group(n_app))
         out_conns.append(connections)
+
     if len(out_conns) == 0:
         import pdb; pdb.set_trace()
 
@@ -110,6 +104,18 @@ def _rewire_based_on_rcorr(prev_edges, rcorr, n_appositions, delay_model, struct
     log.debug("Rewired.")
     
     return new_edges
+
+
+def _assign_connections(connections, based_on):
+    connections = connections.reset_index().sort_values('conductance')
+    connections[['previous_source', 'previous_target']] = connections[
+        ['@source_node', '@target_node']
+    ].copy()
+    based_on = based_on.sort_values()
+    to_connect = based_on.iloc[:len(connections)].reset_index()
+    connections[['@source_node', '@target_node']] =\
+        to_connect[['@source_node', '@target_node']].values
+    return connections
 
 
 def _place_synapses_from_structural(new_edges, structural_edges):
