@@ -121,14 +121,11 @@ def _place_synapses_from_structural(new_edges, structural_edges):
             candidates = structural_edges.loc[(pre, post)]
         except KeyError:
             import pdb; pdb.set_trace()
-        replace = False
+
         if len(conn) > len(candidates):
             raise ValueError("more synapses than synapse sites.")
-            log.warning(f"Not enough unique synapse sites for connection ({pre}, {post})"
-                        f"with {len(conn)} synapses {len(candidates)} sites. reusing synapses")
-            replace = True
-
-        values = candidates.iloc[np.random.choice(range(len(candidates)), size=len(conn), replace=replace)]
+        ids = range(len(candidates))
+        values = candidates.iloc[np.random.choice(ids, size=len(conn), replace=False)]
         if isinstance(values, pd.Series):
             import pdb; pdb.set_trace()
         new_edges.loc[conn.index, values.columns] = values.values
