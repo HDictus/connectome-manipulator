@@ -16,15 +16,8 @@ def manipulation():
 
 
 def test_structural_placement(manipulation, tmp_path):
-    edges_table, nodes, tgt_ids = _setup()
-    struct_config = Path(TEST_DATA_DIR, "circuit_sonata_struct.json")
-    struct_edges_table = _load_struct_edges(struct_config)
-    writer = EdgeWriter(None, edges_table.copy())
-    default_models = _default_models()
-    rcorr = _create_random_rcorr(struct_edges_table)
-    constraints_path = tmp_path / 'rcorr.feather'
-    rcorr.to_feather(constraints_path)
 
+    tgt_ids, nodes, writer, struct_edges_table, constraints_path = _setup(tmp_path)
     manipulation(nodes, writer).apply(
         tgt_ids,
         None,
@@ -32,7 +25,7 @@ def test_structural_placement(manipulation, tmp_path):
         sel_src={'mtype': 'L4_PC'},
         sel_dest={'mtype': 'L5_PC'},
         rcorr_file=constraints_path,
-        **default_models
+        **_default_models()
     )
     res = writer.to_pandas()
     src_nodes = nodes[0].ids({'mtype': 'L4_PC'})
@@ -47,20 +40,13 @@ def test_structural_placement(manipulation, tmp_path):
         struct_edges_table.drop(columns=['distance_soma', 'branch_order'])
     )
 
+
 def test_selection_subset_of_rcorr(manipulation, tmp_path):
     """We want to check that those nodes that recieve new
     connections are only those contained in rcorr.
     We also need to check that when not all pairs in the pathway are in rcorr
     Those pairs which are not in rcorr have the connections between them removed"""
-    edges_table, nodes, tgt_ids = _setup()
-    struct_config = Path(TEST_DATA_DIR, "circuit_sonata_struct.json")
-    struct_edges_table = _load_struct_edges(struct_config)
-    writer = EdgeWriter(None, edges_table.copy())
-    default_models = _default_models()
-    rcorr = _create_random_rcorr(struct_edges_table)
-    constraints_path = tmp_path / 'rcorr.feather'
-    rcorr.to_feather(constraints_path)
-
+    tgt_ids, nodes, writer, struct_edges_table, constraints_path = _setup(tmp_path)
     manipulation(nodes, writer).apply(
         tgt_ids,
         None,
@@ -68,7 +54,7 @@ def test_selection_subset_of_rcorr(manipulation, tmp_path):
         sel_src={'mtype': 'L4_PC'},
         sel_dest={'mtype': 'L5_PC'},
         rcorr_file=constraints_path,
-        **default_models
+        **_default_models()
     )
     res = writer.to_pandas()
     src_nodes = nodes[0].ids({'mtype': 'L4_PC'})
@@ -78,6 +64,7 @@ def test_selection_subset_of_rcorr(manipulation, tmp_path):
         np.isin(res['@target_node'], tgt_nodes)
     )
     rewired_pairs = res[supposed_to_be_rewired].set_index(['@source_node', '@target_node']).index
+    rcorr = pd.read_feather(constraints_path)
     rcorr_pairs = rcorr.set_index(['@source_node', '@target_node']).index
     assert (
         len(rewired_pairs.intersection(rcorr_pairs))
@@ -86,16 +73,8 @@ def test_selection_subset_of_rcorr(manipulation, tmp_path):
 
     
 def test_rcorr_is_subset_of_struct(manipulation, tmp_path):
-    edges_table, nodes, tgt_ids = _setup()
-    struct_config = Path(TEST_DATA_DIR, "circuit_sonata_struct.json")
-    struct_edges_table = _load_struct_edges(struct_config)
-    writer = EdgeWriter(None, edges_table.copy())
-    default_models = _default_models()
-    rcorr = _create_random_rcorr(struct_edges_table)
-    rcorr = rcorr[rcorr['n_appositions'] > 2]
-    constraints_path = tmp_path / 'rcorr.feather'
-    rcorr.to_feather(constraints_path)
 
+    tgt_ids, nodes, writer, struct_edges_table, constraints_path = _setup(tmp_path)
     manipulation(nodes, writer).apply(
         tgt_ids,
         None,
@@ -103,7 +82,7 @@ def test_rcorr_is_subset_of_struct(manipulation, tmp_path):
         sel_src={'mtype': 'L4_PC'},
         sel_dest={'mtype': 'L5_PC'},
         rcorr_file=constraints_path,
-        **default_models
+        **_default_models()
     )
     res = writer.to_pandas()
     src_nodes = nodes[0].ids({'mtype': 'L4_PC'})
@@ -114,13 +93,14 @@ def test_rcorr_is_subset_of_struct(manipulation, tmp_path):
             np.isin(res['@target_node'], tgt_nodes)
         )]
 
+    rcorr = pd.read_feather(constraints_path)
     rcorr_pairs = rcorr.set_index(['@source_node', '@target_node']).index
     pairs = res.set_index(['@source_node', '@target_node']).index
     for k, v in pairs:
         assert (k, v) in rcorr_pairs
 
 
-def _setup():
+def _setup(tmp_path):
     log.setup_logging()
     c = Circuit(Path(TEST_DATA_DIR, "circuit_sonata.json"))
 
@@ -129,7 +109,15 @@ def _setup():
     tgt_ids = nodes[1].ids()
     edges_table = edges.afferent_edges(tgt_ids, properties=edges.property_names)
     edges_table = edges_table.sort_values('@target_node').reset_index(drop=True)
-    return edges_table, nodes, tgt_ids
+
+    struct_config = Path(TEST_DATA_DIR, "circuit_sonata_struct.json")
+    struct_edges_table = _load_struct_edges(struct_config)
+    writer = EdgeWriter(None, edges_table.copy())
+    rcorr = _create_random_rcorr(struct_edges_table)
+    constraints_path = tmp_path / 'rcorr.feather'
+    rcorr.to_feather(constraints_path)
+    return tgt_ids, nodes, writer, struct_edges_table, constraints_path 
+
 
 def _load_struct_edges(struct_config):
     c = Circuit(struct_config)
@@ -166,22 +154,7 @@ def _edges_are_subset(result, superset):
 
 def test_uses_distance_soma_for_delay(manipulation, tmp_path):
 
-    edges_table, nodes, tgt_ids = _setup()
-    struct_config = Path(TEST_DATA_DIR, "circuit_sonata_struct.json")
-    struct_edges_table = _load_struct_edges(struct_config)
-    writer = EdgeWriter(None, edges_table.copy())
-    default_models = _default_models()
-    default_models['delay_model']={
-        "model": "LinDelayModel",
-        "delay_mean_coeff_a": 0.1, # base delay for release of transmitter
-        "delay_mean_coeff_b": 1/300, # delay per um3 axon
-        "delay_std": 0,
-        "delay_min": 0.1
-    }
-    rcorr = _create_random_rcorr(struct_edges_table)
-    constraints_path = tmp_path / 'rcorr.feather'
-    rcorr.to_feather(constraints_path)
-
+    tgt_ids, nodes, writer, struct_edges_table, constraints_path = _setup(tmp_path)
     manipulation(nodes, writer).apply(
         tgt_ids,
         None,
@@ -189,7 +162,13 @@ def test_uses_distance_soma_for_delay(manipulation, tmp_path):
         sel_src={'mtype': 'L4_PC'},
         sel_dest={'mtype': 'L5_PC'},
         rcorr_file=constraints_path,
-        **default_models,
+        delay_model={
+            "model": "LinDelayModel",
+            "delay_mean_coeff_a": 0.1, # base delay for release of transmitter
+            "delay_mean_coeff_b": 1/300, # delay per um3 axon
+            "delay_std": 0,
+            "delay_min": 0.1
+        },
     )
     res = writer.to_pandas()
     src_nodes = nodes[0].ids({'mtype': 'L4_PC'})
@@ -208,17 +187,9 @@ def test_uses_distance_soma_for_delay(manipulation, tmp_path):
     )
 
 def test_not_all_rcorr_in_struct(manipulation, tmp_path):
-    edges_table, nodes, tgt_ids = _setup()
-    struct_config = Path(TEST_DATA_DIR, "circuit_sonata_struct.json")
-    struct_edges_table = _load_struct_edges(struct_config)
-
-    writer = EdgeWriter(None, edges_table.copy())
-    default_models = _default_models()
-    rcorr = _create_random_rcorr(struct_edges_table)
-    constraints_path = tmp_path / 'rcorr.feather'
-    rcorr.to_feather(constraints_path)
-
+    tgt_ids, nodes, writer, struct_edges_table, constraints_path = _setup(tmp_path)
     tgt_ids = [9]
+    edges_table = writer.to_pandas()
     edges_table = edges_table[
         np.isin(edges_table['@target_node'], tgt_ids)
     ]
@@ -233,7 +204,7 @@ def test_not_all_rcorr_in_struct(manipulation, tmp_path):
         sel_src={'mtype': 'L4_PC'},
         sel_dest={'mtype': 'L5_PC'},
         rcorr_file=constraints_path,
-        **default_models
+        **_default_models()
     )
     res = writer.to_pandas()
     src_nodes = nodes[0].ids({'mtype': 'L4_PC'})
@@ -250,16 +221,8 @@ def test_not_all_rcorr_in_struct(manipulation, tmp_path):
 
 
 def test_no_conns(manipulation, tmp_path):
-    edges_table, nodes, tgt_ids = _setup()
-    struct_config = Path(TEST_DATA_DIR, "circuit_sonata_struct.json")
-    struct_edges_table = _load_struct_edges(struct_config)
-
-    writer = EdgeWriter(None, edges_table.copy())
-    default_models = _default_models()
-    rcorr = _create_random_rcorr(struct_edges_table)
-    constraints_path = tmp_path / 'rcorr.feather'
-    rcorr.to_feather(constraints_path)
-
+    tgt_ids, nodes, writer, struct_edges_table, constraints_path = _setup(tmp_path)
+    edges_table = writer.to_pandas()
     manipulation(nodes, writer).apply(
         tgt_ids,
         None,
@@ -267,7 +230,7 @@ def test_no_conns(manipulation, tmp_path):
         sel_src={'mtype': 'bababab'},
         sel_dest={'mtype': 'bababab'},
         rcorr_file=constraints_path,
-        **default_models
+        **_default_models()
     )
     res = writer.to_pandas()
     pd.testing.assert_frame_equal(
