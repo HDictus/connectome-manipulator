@@ -59,6 +59,7 @@ class JobsCommonInfo:
 
     nodes: [bluepysnap.nodes.Nodes]
     edges: [bluepysnap.edges.Edges]
+    struct_edges: [bluepysnap.edges.Edges]
 
 
 @dataclass
@@ -128,7 +129,7 @@ def load_circuit(sonata_config, popul_name=None):
     return c.config, nodes, nodes_files, edges, edges_file, popul_name
 
 
-def apply_manipulation(edges_table, nodes, job: JobInfo, manip: dict):
+def apply_manipulation(edges_table, nodes, job: JobInfo, manip: dict, struct_edges_table=None):
     """Apply manipulation to connectome (edges_table) as specified in the manip_config."""
     log.info(f'Applying manipulation "{manip["name"]}" for split {job.split_index}')
     log.info(f'Results will be written to "{job.out_parquet_file}"')
@@ -178,6 +179,9 @@ def apply_manipulation(edges_table, nodes, job: JobInfo, manip: dict):
                         kwargs["sel_src"] = sel_src
                     if sel_dest:
                         kwargs["sel_dest"] = sel_dest
+
+                    if struct_edges_table is not None:
+                        kwargs['struct_edges'] = struct_edges_table
 
                     log.info(
                         f">>Step {n + 1}: source={source} sel_src={kwargs.get('sel_src')} sel_dest={kwargs.get('sel_dest')}"
@@ -296,6 +300,10 @@ def manip_wrapper(jobs_common: JobsCommonInfo, job: JobInfo, options: Options):
 
     # Apply connectome wiring
     edges_table = _get_afferent_edges_table(job.flatten(), jobs_common.edges)
+    if jobs_common.struct_edges is not None:
+        struct_edges_table = _get_afferent_edges_table(job.flatten(), jobs_common.struct_edges)
+    else:
+        struct_edges_table = None
 
     for idx in range(len(config["manip"]["fcts"])):
         if filename := config["manip"]["fcts"][idx].get("model_pathways"):
@@ -309,6 +317,7 @@ def manip_wrapper(jobs_common: JobsCommonInfo, job: JobInfo, options: Options):
             jobs_common.nodes,
             job,
             config["manip"],
+            struct_edges_table=struct_edges_table
         )
 
     return N_syn_in, N_syn_out, profiler.ProfilerManager
@@ -334,6 +343,12 @@ def main(options, log_file, executor_args=()):
     sonata_config, nodes, _, edges, _, src_popul_name = load_circuit(
         sonata_config_file, edges_popul_name
     )
+    if "struct_circuit_config" in config:
+        _, _, _, struct_edges, _, _, = load_circuit(
+            config['struct_circuit_config'], edges_popul_name
+        )
+    else:
+        struct_edges = None
 
     # Define target node splits
     node_ids_split = get_node_splits(config, options, nodes)
@@ -351,7 +366,7 @@ def main(options, log_file, executor_args=()):
     with tracker.follow_jobs() as result_hook:
         with executors.in_context(options, executor_params, result_hook=result_hook) as executor:
             log.info("Start job submission")
-            jobs_common = JobsCommonInfo(nodes, edges)
+            jobs_common = JobsCommonInfo(nodes, edges, struct_edges)
 
             for i_split, parquet_file in tracker.prepare_parquet_dir(options.do_resume):
                 job = JobInfo(i_split, len(node_ids_split), node_ids_split[i_split], parquet_file)
