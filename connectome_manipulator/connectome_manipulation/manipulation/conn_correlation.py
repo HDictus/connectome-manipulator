@@ -115,7 +115,7 @@ def _retrieve_synapse_properties(prev_edges, prev_pairs, new_pairs):
 def _place_synapses_from_structural(new_edges, structural_edges):
     structural_edges = structural_edges.set_index(['@source_node', '@target_node']).sort_index()
     if len(new_edges) == 0:
-        return pd.DataFrame([], columns=structural_edges.columns)
+        return
     for (pre, post), conn in new_edges.groupby(['@source_node', '@target_node']):
         try:
             candidates = structural_edges.loc[(pre, post)]
