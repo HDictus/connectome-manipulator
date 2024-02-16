@@ -14,9 +14,6 @@ def manipulation():
     m = Manipulation.get("conn_correlation")
     return m
 
-# TODO: we need a functional test that will check that total connprob and nsyn are conserved
-#   also when things are parallelized
-#   rn these are verification steps in circuits.
 
 def test_structural_placement(manipulation, tmp_path):
     edges_table, nodes, tgt_ids = _setup()
@@ -147,8 +144,7 @@ def _default_models():
             "delay_mean_coeff_b": 1/300, # delay per um3 axon
             "delay_std": 0,
             "delay_min": 0.1
-            # TODO: get these from the recipe
-            # TODO: can we give LinDelayModel better names?
+
         }
     }
 
@@ -186,8 +182,6 @@ def test_uses_distance_soma_for_delay(manipulation, tmp_path):
     constraints_path = tmp_path / 'rcorr.feather'
     rcorr.to_feather(constraints_path)
 
-    # TODO: testabilitiy would improve if we passed initialized objects instead of specs
-    # TODO: can break it down into smaller chunks and test each
     manipulation(nodes, writer).apply(
         tgt_ids,
         None,
