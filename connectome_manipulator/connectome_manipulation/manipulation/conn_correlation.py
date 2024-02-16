@@ -107,20 +107,9 @@ def _assign_connections(connections, based_on):
 
 def _retrieve_synapse_properties(prev_edges, prev_pairs, new_pairs):
     indexed_by_prev_pair = prev_edges.set_index(['@source_node', '@target_node']).sort_index()
-    synapses = []
-    for (prev_src, prev_tgt), (new_src, new_tgt) in zip(prev_pairs.values, new_pairs.values):
-        connection_synapses = indexed_by_prev_pair.loc[(prev_src, prev_tgt)].copy()
-        if isinstance(connection_synapses, pd.Series):
-            connection_synapses = pd.DataFrame({**connection_synapses}, index=[0])
-        connection_synapses.reset_index(inplace=True, drop=True)
-        connection_synapses['@source_node'] = int(new_src)
-        connection_synapses['@target_node'] = int(new_tgt)
-        synapses.append(connection_synapses)
-
-    if len(synapses) == 0:
-        import pdb; pdb.set_trace()
-    new_edges = pd.concat(synapses).reset_index(drop=True)
-    return new_edges
+    new_by_prev = new_pairs.set_index(list(prev_pairs.values.transpose()))
+    indexed_by_prev_pair[['@source_node', '@target_node']] = new_by_prev
+    return indexed_by_prev_pair.reset_index(drop=True)
 
 
 def _place_synapses_from_structural(new_edges, structural_edges):
