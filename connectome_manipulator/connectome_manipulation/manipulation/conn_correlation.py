@@ -12,15 +12,18 @@ class ResponseCorrelationRewiring(Manipulation):
               split_ids,
               syn_class,
               struct_edges,
-              rcorr_file,
-              delay_model,
+              normalized_rates,
+              delay_model=None,
               pathway_specs=None,
               sel_src=None,
               sel_dest=None
             ):
 
         log.debug("Loading response correlation")
-        rcorr = pd.read_feather(rcorr_file)
+        activity = pd.read_feather(normalized_rates)
+        other_cols = [col for col in activity if col not in ['gid', 'rate']]
+        activity = activity.set_index(['gid'] + other_cols)['rate']
+
         log.debug("Restricting edges to relevant pathway.")
         all_edges = self.writer.to_pandas()
         src_nodes = self.nodes[0].ids(sel_src)
@@ -36,17 +39,24 @@ class ResponseCorrelationRewiring(Manipulation):
             return
         prev_edges = all_edges[in_pathway]
 
-        rcorr = rcorr[
-            np.logical_and(
-                np.isin(rcorr['@source_node'], src_nodes),
-                np.isin(rcorr['@target_node'], tgt_nodes)
-            )
-        ]
+        n_appositions = _collapse_connections(struct_edges)['nsyn']
+        n_syns = _collapse_connections(prev_edges)['nsyn']
+        viable_connections = n_appositions[n_appositions >= n_syns.min()]
+        rcorr = []
 
-        rcorr = rcorr.set_index(['@source_node', '@target_node'])
-        n_appositions = rcorr['n_appositions']
-        rcorr = rcorr['r']
-
+        for pre, post in viable_connections.index:
+            rcorr.append({
+                'r': np.mean(activity[pre] * activity[post]),
+                '@source_node': pre,
+                '@target_node': post
+            })
+        rcorr = pd.DataFrame(rcorr).set_index(['@source_node', '@target_node'])['r']
+        # rcorr = rcorr[
+        #     np.logical_and(
+        #         np.isin(rcorr['@source_node'], src_nodes),
+        #         np.isin(rcorr['@target_node'], tgt_nodes)
+        #     )
+        # ]
         log.debug("Grouping structural and functional connections")
 
         new_edges = _rewire_based_on_rcorr(prev_edges, rcorr, n_appositions, delay_model, struct_edges)
@@ -57,7 +67,7 @@ class ResponseCorrelationRewiring(Manipulation):
 
 
 
-def _rewire_based_on_rcorr(prev_edges, rcorr, n_appositions, delay_model, struct_edges):    
+def _rewire_based_on_rcorr(prev_edges, rcorr, n_appositions, delay_model, struct_edges):
     previous_conns = _collapse_connections(prev_edges)
     rcorr_by_appositions = rcorr.groupby(n_appositions)
     log.debug("Reassigning connections")

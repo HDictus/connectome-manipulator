@@ -24,7 +24,7 @@ def test_structural_placement(manipulation, tmp_path):
         struct_edges=struct_edges_table,
         sel_src={'mtype': 'L4_PC'},
         sel_dest={'mtype': 'L5_PC'},
-        rcorr_file=constraints_path,
+        normalized_rates=constraints_path,
         **_default_models()
     )
     res = writer.to_pandas()
@@ -41,47 +41,21 @@ def test_structural_placement(manipulation, tmp_path):
     )
 
 
-def test_selection_subset_of_rcorr(manipulation, tmp_path):
-    """We want to check that those nodes that recieve new
-    connections are only those contained in rcorr.
-    We also need to check that when not all pairs in the pathway are in rcorr
-    Those pairs which are not in rcorr have the connections between them removed"""
-    tgt_ids, nodes, writer, struct_edges_table, constraints_path = _setup(tmp_path)
-    manipulation(nodes, writer).apply(
-        tgt_ids,
-        None,
-        struct_edges=struct_edges_table,
-        sel_src={'mtype': 'L4_PC'},
-        sel_dest={'mtype': 'L5_PC'},
-        rcorr_file=constraints_path,
-        **_default_models()
-    )
-    res = writer.to_pandas()
-    src_nodes = nodes[0].ids({'mtype': 'L4_PC'})
-    tgt_nodes = nodes[1].ids({'mtype': 'L5_PC'})
-    supposed_to_be_rewired = np.logical_and(
-        np.isin(res['@source_node'], src_nodes),
-        np.isin(res['@target_node'], tgt_nodes)
-    )
-    rewired_pairs = res[supposed_to_be_rewired].set_index(['@source_node', '@target_node']).index
-    rcorr = pd.read_feather(constraints_path)
-    rcorr_pairs = rcorr.set_index(['@source_node', '@target_node']).index
-    assert (
-        len(rewired_pairs.intersection(rcorr_pairs))
-        == len(rewired_pairs.intersection(rewired_pairs))
-    )
-
     
-def test_rcorr_is_subset_of_struct(manipulation, tmp_path):
+def test_only_creates_structurally_viable(manipulation, tmp_path):
 
     tgt_ids, nodes, writer, struct_edges_table, constraints_path = _setup(tmp_path)
+    min_nsyn = 2
+    edges_table = writer.to_pandas()
+    edges_table = remove_small_connections(edges_table, min_nsyn)
+    writer.from_pandas(edges_table)
     manipulation(nodes, writer).apply(
         tgt_ids,
         None,
         struct_edges=struct_edges_table,
         sel_src={'mtype': 'L4_PC'},
         sel_dest={'mtype': 'L5_PC'},
-        rcorr_file=constraints_path,
+        normalized_rates=constraints_path,
         **_default_models()
     )
     res = writer.to_pandas()
@@ -93,11 +67,16 @@ def test_rcorr_is_subset_of_struct(manipulation, tmp_path):
             np.isin(res['@target_node'], tgt_nodes)
         )]
 
-    rcorr = pd.read_feather(constraints_path)
-    rcorr_pairs = rcorr.set_index(['@source_node', '@target_node']).index
+    napp = struct_edges_table.assign(napp=1).groupby(['@source_node', '@target_node'])['napp'].sum()
     pairs = res.set_index(['@source_node', '@target_node']).index
     for k, v in pairs:
-        assert (k, v) in rcorr_pairs
+        assert napp[(k, v)] >= min_nsyn
+
+
+def remove_small_connections(edges, min_nsyn):
+    nsyn = edges.assign(nsyn=1).groupby(['@source_node', '@target_node'])['nsyn'].sum()
+    edges = edges.set_index(['@source_node', '@target_node'])[nsyn >= min_nsyn]
+    return edges.reset_index()
 
 
 def _setup(tmp_path):
@@ -113,12 +92,22 @@ def _setup(tmp_path):
     struct_config = Path(TEST_DATA_DIR, "circuit_sonata_struct.json")
     struct_edges_table = _load_struct_edges(struct_config)
     writer = EdgeWriter(None, edges_table.copy())
-    rcorr = _create_random_rcorr(struct_edges_table)
-    constraints_path = tmp_path / 'rcorr.feather'
-    rcorr.to_feather(constraints_path)
+    activity = _create_random_normalized_activity(np.union1d(nodes[0].ids(), nodes[1].ids()))
+    constraints_path = tmp_path / 'activity.feather'
+    activity.reset_index().to_feather(constraints_path)
     return tgt_ids, nodes, writer, struct_edges_table, constraints_path 
 
 
+def _create_random_normalized_activity(ids):
+    activity = pd.DataFrame(
+        [{'gid': id_,
+          'other_col': other,
+          'rate': np.random.uniform()}
+         for other in range(100) for id_ in ids])
+    centered = activity.set_index('gid') / activity.groupby('gid').mean()
+    return centered / activity.groupby('gid').std()
+
+         
 def _load_struct_edges(struct_config):
     c = Circuit(struct_config)
     edges = c.edges[c.edges.population_names[0]]
@@ -161,7 +150,7 @@ def test_uses_distance_soma_for_delay(manipulation, tmp_path):
         struct_edges=struct_edges_table,
         sel_src={'mtype': 'L4_PC'},
         sel_dest={'mtype': 'L5_PC'},
-        rcorr_file=constraints_path,
+        normalized_rates=constraints_path,
         delay_model={
             "model": "LinDelayModel",
             "delay_mean_coeff_a": 0.1, # base delay for release of transmitter
@@ -203,7 +192,7 @@ def test_not_all_rcorr_in_struct(manipulation, tmp_path):
         struct_edges=struct_edges_table,
         sel_src={'mtype': 'L4_PC'},
         sel_dest={'mtype': 'L5_PC'},
-        rcorr_file=constraints_path,
+        normalized_rates=constraints_path,
         **_default_models()
     )
     res = writer.to_pandas()
@@ -229,7 +218,7 @@ def test_no_conns(manipulation, tmp_path):
         struct_edges=struct_edges_table,
         sel_src={'mtype': 'bababab'},
         sel_dest={'mtype': 'bababab'},
-        rcorr_file=constraints_path,
+        normalized_rates=constraints_path,
         **_default_models()
     )
     res = writer.to_pandas()
