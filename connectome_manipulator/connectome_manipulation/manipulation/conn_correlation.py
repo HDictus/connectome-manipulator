@@ -75,26 +75,13 @@ def _rewire_based_on_rcorr(prev_edges, rcorr, n_appositions, delay_model, struct
         import pdb; pdb.set_trace()
 
     new_connections = pd.concat(out_conns)
-    indexed_by_prev_pair = prev_edges.set_index(['@source_node', '@target_node']).sort_index()
-    synapses = []
-        
+
     log.debug("Reassigning synapse properties")
-    for _, connection in new_connections.iterrows():
-        connection_synapses = indexed_by_prev_pair.loc[
-            (connection['previous_source'], connection['previous_target'])
-        ].copy()
-        if isinstance(connection_synapses, pd.Series):
-            connection_synapses = pd.DataFrame({**connection_synapses}, index=[0])
-        assert len(connection_synapses) == connection['nsyn']
-        connection_synapses.reset_index(inplace=True, drop=True)
-        connection_synapses['@source_node'] = int(connection['@source_node'])
-        connection_synapses['@target_node'] = int(connection['@target_node'])
-        synapses.append(connection_synapses)
-
-    if len(synapses) == 0:
-        import pdb; pdb.set_trace()
-    new_edges = pd.concat(synapses).reset_index(drop=True)
-
+    new_edges = _retrieve_synapse_properties(
+        prev_edges,
+        new_connections[['previous_source', 'previous_target']],
+        new_connections[['@source_node', '@target_node']]
+    )
 
     log.debug("Placing synapses")
     _place_synapses_from_structural(new_edges, struct_edges)
@@ -116,6 +103,24 @@ def _assign_connections(connections, based_on):
     connections[['@source_node', '@target_node']] =\
         to_connect[['@source_node', '@target_node']].values
     return connections
+
+
+def _retrieve_synapse_properties(prev_edges, prev_pairs, new_pairs):
+    indexed_by_prev_pair = prev_edges.set_index(['@source_node', '@target_node']).sort_index()
+    synapses = []
+    for (prev_src, prev_tgt), (new_src, new_tgt) in zip(prev_pairs.values, new_pairs.values):
+        connection_synapses = indexed_by_prev_pair.loc[(prev_src, prev_tgt)].copy()
+        if isinstance(connection_synapses, pd.Series):
+            connection_synapses = pd.DataFrame({**connection_synapses}, index=[0])
+        connection_synapses.reset_index(inplace=True, drop=True)
+        connection_synapses['@source_node'] = int(new_src)
+        connection_synapses['@target_node'] = int(new_tgt)
+        synapses.append(connection_synapses)
+
+    if len(synapses) == 0:
+        import pdb; pdb.set_trace()
+    new_edges = pd.concat(synapses).reset_index(drop=True)
+    return new_edges
 
 
 def _place_synapses_from_structural(new_edges, structural_edges):
