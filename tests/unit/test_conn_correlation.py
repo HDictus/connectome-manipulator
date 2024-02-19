@@ -90,6 +90,7 @@ def test_one_struct_one_conn(manipulation, tmp_path):
         res[['@source_node', '@target_node']] ==
         struct_edges_table[['@source_node', '@target_node']]
     )
+
     
 
 def test_only_creates_structurally_viable(manipulation, tmp_path):
@@ -98,25 +99,18 @@ def test_only_creates_structurally_viable(manipulation, tmp_path):
     min_nsyn = 2
     edges_table = writer.to_pandas()
     edges_table = remove_small_connections(edges_table, min_nsyn)
+    assert(len(edges_table) > 0)
     writer.from_pandas(edges_table)
     manipulation(nodes, writer).apply(
         tgt_ids,
         None,
         struct_edges=struct_edges_table,
-        sel_src={'mtype': 'L4_PC'},
-        sel_dest={'mtype': 'L5_PC'},
+        sel_src={},
+        sel_dest={},
         normalized_rates=constraints_path,
         **_default_models()
     )
     res = writer.to_pandas()
-    src_nodes = nodes[0].ids({'mtype': 'L4_PC'})
-    tgt_nodes = nodes[1].ids({'mtype': 'L5_PC'})
-    res = res[
-        np.logical_and(
-            np.isin(res['@source_node'], src_nodes),
-            np.isin(res['@target_node'], tgt_nodes)
-        )]
-
     napp = struct_edges_table.assign(napp=1).groupby(['@source_node', '@target_node'])['napp'].sum()
     pairs = res.set_index(['@source_node', '@target_node']).index
     for k, v in pairs:

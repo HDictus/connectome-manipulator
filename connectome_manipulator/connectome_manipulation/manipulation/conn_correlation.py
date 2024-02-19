@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 from connectome_manipulator import log, profiler
 from connectome_manipulator.model_building.model_types import AbstractModel
 from connectome_manipulator.connectome_manipulation.manipulation import Manipulation
@@ -49,9 +50,11 @@ class ResponseCorrelationRewiring(Manipulation):
         self.writer.from_pandas(all_edges)        
 
 def _load_activity(normalized_rates):
+    # TODO: load as pivot table
     activity = pd.read_feather(normalized_rates)
 
     other_cols = [col for col in activity if col not in ['gid', 'rate']]
+    
     activity = activity.set_index(['gid'] + other_cols, drop=True)['rate'].sort_index()
     return activity
 
@@ -62,15 +65,22 @@ def _determine_structurally_viable(struct_edges, prev_edges):
 
 
 def _calculate_response_correlation(activity, pairs):
-    rcorr = []
-    for pre, post in pairs:
-        rcorr.append({
-            'r': np.mean(activity[pre] * activity[post]),
+    print("rcorr")
+    for _ in tqdm(range(1)):
+        other_columns = [c for c in activity.reset_index().columns if c not in ['gid', 'rate']]
+        pivoted = activity.fillna(0).reset_index().pivot_table(
+            values='rate',
+            index='gid',
+            columns=other_columns)
+        pre, post = pairs.get_level_values(0), pairs.get_level_values(1)
+        
+        pre_activity = pivoted.loc[pre].values
+        post_activity = pivoted.loc[post].values
+        rcorr =  pd.DataFrame({
+            'r': (pre_activity * post_activity).mean(axis=1),
             '@source_node': pre,
-            '@target_node': post
-        })
-    rcorr = pd.DataFrame(rcorr).set_index(['@source_node', '@target_node'])['r']
-    return rcorr
+            '@target_node': post})
+        return rcorr.set_index(['@source_node', '@target_node'])['r']
 
 
 def _rewire_based_on_rcorr(prev_edges, rcorr, n_appositions, delay_model, struct_edges):
@@ -78,14 +88,15 @@ def _rewire_based_on_rcorr(prev_edges, rcorr, n_appositions, delay_model, struct
     rcorr_by_appositions = rcorr.groupby(n_appositions)
     log.debug("Reassigning connections")
     out_conns = []
-    for n_app, conns in previous_conns.groupby(n_appositions):
+    print("conns")
+    for n_app, conns in tqdm(previous_conns.groupby(n_appositions)):
         if not all(conns['nsyn'] <= n_app):
             print(conns)
             raise ValueError("structural impossibility")
 
         connections = _assign_connections(conns, rcorr_by_appositions.get_group(n_app))
         out_conns.append(connections)
-
+    print("reassigned connections")
     new_connections = pd.concat(out_conns)
 
     log.debug("Reassigning synapse properties")
@@ -96,7 +107,7 @@ def _rewire_based_on_rcorr(prev_edges, rcorr, n_appositions, delay_model, struct
     )
 
     log.debug("Placing synapses")
-    _place_synapses_from_structural(new_edges, struct_edges)
+    new_edges = _place_synapses_from_structural(new_edges, struct_edges, new_connections)
     log.debug("Assigning delays")
     _assign_delays_from_model(delay_model, new_edges)
 
@@ -124,18 +135,18 @@ def _retrieve_synapse_properties(prev_edges, prev_pairs, new_pairs):
     return indexed_by_prev_pair.reset_index(drop=True)
 
 
-def _place_synapses_from_structural(new_edges, structural_edges):
-    structural_edges = structural_edges.set_index(['@source_node', '@target_node']).sort_index()
-    if len(new_edges) == 0:
-        return
-    for (pre, post), conn in new_edges.groupby(['@source_node', '@target_node']):
-
-        candidates = structural_edges.loc[[(pre, post)]]
-        if len(conn) > len(candidates):
-            raise ValueError("more synapses than synapse sites.")
-        ids = range(len(candidates))
-        values = candidates.iloc[np.random.choice(ids, size=len(conn), replace=False)]
-        new_edges.loc[conn.index, values.columns] = values.values
+def _place_synapses_from_structural(new_edges, structural_edges, new_connections):
+    new_connections = new_connections.set_index(['@source_node', '@target_node'])
+    struct_by_nsyn = structural_edges.set_index(['@source_node', '@target_node']).groupby(new_connections['nsyn'])
+    edges_by_nsyn = new_edges.set_index(['@source_node', '@target_node']).sort_index()
+    out = []
+    for nsyn, edges in tqdm(edges_by_nsyn.groupby(new_connections['nsyn'])):
+        struct = struct_by_nsyn.get_group(nsyn).reset_index()
+        struct_edges = struct.groupby(['@source_node', '@target_node']).sample(n=int(nsyn)).set_index(['@source_node', '@target_node']).sort_index()
+        edges = edges.sort_index()
+        edges[struct_edges.columns] = struct_edges.values
+        out.append(edges)
+    return pd.concat(out).reset_index()
             
 
 def _assign_delays_from_model(delay_model, new_edges):
