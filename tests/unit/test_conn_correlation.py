@@ -40,8 +40,35 @@ def test_structural_placement(manipulation, tmp_path):
         struct_edges_table.drop(columns=['distance_soma', 'branch_order'])
     )
 
+def test_rcorr_rank_equals_connductance_rank(manipulation, tmp_path):
+    tgt_ids, nodes, writer, struct_edges_table, constraints_path = _setup(tmp_path)
+    edges_table = writer.to_pandas()
+    napp = 3 # to ensure we only check for corr
+    edges_table = remove_large_connections(edges_table, napp)
+    struct_edges_table = remove_small_connections(
+        remove_large_connections(struct_edges_table, napp),
+        napp)
+    writer.from_pandas(edges_table)
+    manipulation(nodes, writer).apply(
+        tgt_ids,
+        None,
+        struct_edges=struct_edges_table,
+        sel_src={},
+        sel_dest={},
+        normalized_rates=constraints_path,
+        **_default_models()
+    )
+    activity = pd.read_feather(constraints_path)
+    rcorr = activity.pivot_table(index='other_col', columns='gid', values='rate').corr().melt(ignore_index=False).rename(columns={'gid': '@target_node'}).reset_index().rename(columns={'gid': '@source_node'}).set_index(['@source_node', '@target_node'])['value']
+    napp = struct_edges_table.assign(napp=1).groupby(['@source_node', '@target_node'])['napp'].sum()
+    rcorr = rcorr[napp.index]
+    res = writer.to_pandas()
+    conductance = res.groupby(['@source_node', '@target_node'])['conductance'].sum()
 
-    
+    assert all(conductance.sort_values(ascending=False).index == rcorr.sort_values(ascending=False).index[:len(conductance)])
+
+
+
 def test_only_creates_structurally_viable(manipulation, tmp_path):
 
     tgt_ids, nodes, writer, struct_edges_table, constraints_path = _setup(tmp_path)
@@ -79,6 +106,12 @@ def remove_small_connections(edges, min_nsyn):
     return edges.reset_index()
 
 
+def remove_large_connections(edges, max_nsyn):
+    nsyn = edges.assign(nsyn=1).groupby(['@source_node', '@target_node'])['nsyn'].sum()
+    edges = edges.set_index(['@source_node', '@target_node'])[nsyn <= max_nsyn]
+    return edges.reset_index()
+
+
 def _setup(tmp_path):
     log.setup_logging()
     c = Circuit(Path(TEST_DATA_DIR, "circuit_sonata.json"))
@@ -94,7 +127,7 @@ def _setup(tmp_path):
     writer = EdgeWriter(None, edges_table.copy())
     activity = _create_random_normalized_activity(np.union1d(nodes[0].ids(), nodes[1].ids()))
     constraints_path = tmp_path / 'activity.feather'
-    activity.reset_index().to_feather(constraints_path)
+    activity.to_feather(constraints_path)
     return tgt_ids, nodes, writer, struct_edges_table, constraints_path 
 
 
@@ -104,8 +137,11 @@ def _create_random_normalized_activity(ids):
           'other_col': other,
           'rate': np.random.uniform()}
          for other in range(100) for id_ in ids])
-    centered = activity.set_index('gid') / activity.groupby('gid').mean()
-    return centered / activity.groupby('gid').std()
+    centered = activity.set_index(['gid', 'other_col'])
+    centered['rate'] -= centered.groupby('gid')['rate'].mean()
+    centered['rate'] /= centered.groupby('gid')['rate'].std()
+    assert all(centered.groupby('gid').std() == 1)
+    return centered.reset_index()
 
          
 def _load_struct_edges(struct_config):

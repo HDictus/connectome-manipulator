@@ -21,8 +21,9 @@ class ResponseCorrelationRewiring(Manipulation):
 
         log.debug("Loading response correlation")
         activity = pd.read_feather(normalized_rates)
+
         other_cols = [col for col in activity if col not in ['gid', 'rate']]
-        activity = activity.set_index(['gid'] + other_cols)['rate']
+        activity = activity.set_index(['gid'] + other_cols, drop=True)['rate']
 
         log.debug("Restricting edges to relevant pathway.")
         all_edges = self.writer.to_pandas()
@@ -77,7 +78,6 @@ def _rewire_based_on_rcorr(prev_edges, rcorr, n_appositions, delay_model, struct
             print(conns)
             import pdb; pdb.set_trace()
             raise ValueError("structural impossibility")
-
         connections = _assign_connections(conns, rcorr_by_appositions.get_group(n_app))
         out_conns.append(connections)
 
@@ -104,11 +104,11 @@ def _rewire_based_on_rcorr(prev_edges, rcorr, n_appositions, delay_model, struct
 
 
 def _assign_connections(connections, based_on):
-    connections = connections.reset_index().sort_values('conductance')
+    connections = connections.reset_index().sort_values('conductance', ascending=False)
     connections[['previous_source', 'previous_target']] = connections[
         ['@source_node', '@target_node']
     ].copy()
-    based_on = based_on.sort_values()
+    based_on = based_on.sort_values(ascending=False)
     to_connect = based_on.iloc[:len(connections)].reset_index()
     connections[['@source_node', '@target_node']] =\
         to_connect[['@source_node', '@target_node']].values
