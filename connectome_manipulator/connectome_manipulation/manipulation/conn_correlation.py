@@ -39,33 +39,35 @@ class ResponseCorrelationRewiring(Manipulation):
         if in_pathway.sum() == 0:
             return
         prev_edges = all_edges[in_pathway]
+        
+        viable_connections = _determine_structurally_viable(struct_edges, prev_edges)
+        rcorr = _calculate_response_correlation(activity, viable_connections.index)
 
-        n_appositions = _collapse_connections(struct_edges)['nsyn']
-        n_syns = _collapse_connections(prev_edges)['nsyn']
-        viable_connections = n_appositions[n_appositions >= n_syns.min()]
-        rcorr = []
-
-        for pre, post in viable_connections.index:
-            rcorr.append({
-                'r': np.mean(activity[pre] * activity[post]),
-                '@source_node': pre,
-                '@target_node': post
-            })
-        rcorr = pd.DataFrame(rcorr).set_index(['@source_node', '@target_node'])['r']
-        # rcorr = rcorr[
-        #     np.logical_and(
-        #         np.isin(rcorr['@source_node'], src_nodes),
-        #         np.isin(rcorr['@target_node'], tgt_nodes)
-        #     )
-        # ]
         log.debug("Grouping structural and functional connections")
 
-        new_edges = _rewire_based_on_rcorr(prev_edges, rcorr, n_appositions, delay_model, struct_edges)
+        new_edges = _rewire_based_on_rcorr(prev_edges, rcorr, viable_connections, delay_model, struct_edges)
 
         all_edges = pd.concat([all_edges[~in_pathway], new_edges])
         all_edges = all_edges.sort_values(['@target_node', '@source_node']).reset_index(drop=True)
         self.writer.from_pandas(all_edges)        
 
+
+def _determine_structurally_viable(struct_edges, prev_edges):
+    n_appositions = _collapse_connections(struct_edges)['nsyn']
+    n_syns = _collapse_connections(prev_edges)['nsyn']
+    return n_appositions[n_appositions >= n_syns.min()]
+
+
+def _calculate_response_correlation(activity, pairs):
+    rcorr = []
+    for pre, post in pairs:
+        rcorr.append({
+            'r': np.mean(activity[pre] * activity[post]),
+            '@source_node': pre,
+            '@target_node': post
+        })
+    rcorr = pd.DataFrame(rcorr).set_index(['@source_node', '@target_node'])['r']
+    return rcorr
 
 
 def _rewire_based_on_rcorr(prev_edges, rcorr, n_appositions, delay_model, struct_edges):
