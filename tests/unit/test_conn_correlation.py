@@ -68,6 +68,29 @@ def test_rcorr_rank_equals_connductance_rank(manipulation, tmp_path):
     assert all(conductance.sort_values(ascending=False).index == rcorr.sort_values(ascending=False).index[:len(conductance)])
 
 
+def test_one_struct_one_conn(manipulation, tmp_path):
+    # TODO: testing this on smaller util methods would be clearer
+    tgt_ids, nodes, writer, struct_edges_table, constraints_path = _setup(tmp_path)
+    edges_table = writer.to_pandas()
+    edges_table = edges_table.iloc[[0]]
+    struct_edges_table = struct_edges_table.set_index(['@source_node', '@target_node']).loc[
+        tuple(edges_table[['@source_node', '@target_node']].values[0])].iloc[[0]].reset_index()
+    writer.from_pandas(edges_table)
+    manipulation(nodes, writer).apply(
+        tgt_ids,
+        None,
+        struct_edges=struct_edges_table,
+        sel_src={},
+        sel_dest={},
+        normalized_rates=constraints_path,
+        **_default_models()
+    )
+    res = writer.to_pandas()
+    assert all(
+        res[['@source_node', '@target_node']] ==
+        struct_edges_table[['@source_node', '@target_node']]
+    )
+    
 
 def test_only_creates_structurally_viable(manipulation, tmp_path):
 

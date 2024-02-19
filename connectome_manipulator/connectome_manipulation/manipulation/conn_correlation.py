@@ -20,10 +20,7 @@ class ResponseCorrelationRewiring(Manipulation):
             ):
 
         log.debug("Loading response correlation")
-        activity = pd.read_feather(normalized_rates)
-
-        other_cols = [col for col in activity if col not in ['gid', 'rate']]
-        activity = activity.set_index(['gid'] + other_cols, drop=True)['rate']
+        activity = _load_activity(normalized_rates)
 
         log.debug("Restricting edges to relevant pathway.")
         all_edges = self.writer.to_pandas()
@@ -51,6 +48,12 @@ class ResponseCorrelationRewiring(Manipulation):
         all_edges = all_edges.sort_values(['@target_node', '@source_node']).reset_index(drop=True)
         self.writer.from_pandas(all_edges)        
 
+def _load_activity(normalized_rates):
+    activity = pd.read_feather(normalized_rates)
+
+    other_cols = [col for col in activity if col not in ['gid', 'rate']]
+    activity = activity.set_index(['gid'] + other_cols, drop=True)['rate'].sort_index()
+    return activity
 
 def _determine_structurally_viable(struct_edges, prev_edges):
     n_appositions = _collapse_connections(struct_edges)['nsyn']
@@ -78,13 +81,10 @@ def _rewire_based_on_rcorr(prev_edges, rcorr, n_appositions, delay_model, struct
     for n_app, conns in previous_conns.groupby(n_appositions):
         if not all(conns['nsyn'] <= n_app):
             print(conns)
-            import pdb; pdb.set_trace()
             raise ValueError("structural impossibility")
+
         connections = _assign_connections(conns, rcorr_by_appositions.get_group(n_app))
         out_conns.append(connections)
-
-    if len(out_conns) == 0:
-        import pdb; pdb.set_trace()
 
     new_connections = pd.concat(out_conns)
 
@@ -129,17 +129,12 @@ def _place_synapses_from_structural(new_edges, structural_edges):
     if len(new_edges) == 0:
         return
     for (pre, post), conn in new_edges.groupby(['@source_node', '@target_node']):
-        try:
-            candidates = structural_edges.loc[(pre, post)]
-        except KeyError:
-            import pdb; pdb.set_trace()
 
+        candidates = structural_edges.loc[[(pre, post)]]
         if len(conn) > len(candidates):
             raise ValueError("more synapses than synapse sites.")
         ids = range(len(candidates))
         values = candidates.iloc[np.random.choice(ids, size=len(conn), replace=False)]
-        if isinstance(values, pd.Series):
-            import pdb; pdb.set_trace()
         new_edges.loc[conn.index, values.columns] = values.values
             
 
