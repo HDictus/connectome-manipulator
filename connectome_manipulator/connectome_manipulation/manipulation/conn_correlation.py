@@ -105,7 +105,7 @@ def _rewire_based_on_rcorr(prev_edges, rcorr, n_appositions, delay_model, struct
         new_connections[['previous_source', 'previous_target']],
         new_connections[['@source_node', '@target_node']]
     )
-
+    new_edges = _shift_synapses(new_edges, rcorr)
     log.debug("Placing synapses")
     new_edges = _place_synapses_from_structural(new_edges, struct_edges, new_connections)
     log.debug("Assigning delays")
@@ -117,7 +117,7 @@ def _rewire_based_on_rcorr(prev_edges, rcorr, n_appositions, delay_model, struct
 
 
 def _assign_connections(connections, based_on):
-    connections = connections.reset_index().sort_values('conductance', ascending=False)
+    connections = connections.reset_index().sort_values('nsyn', ascending=False)
     connections[['previous_source', 'previous_target']] = connections[
         ['@source_node', '@target_node']
     ].copy()
@@ -126,6 +126,18 @@ def _assign_connections(connections, based_on):
     connections[['@source_node', '@target_node']] =\
         to_connect[['@source_node', '@target_node']].values
     return connections
+
+
+# TODO: add tests
+def _shift_synapses(new_edges, based_on):
+    new_edges = new_edges.set_index(['@source_node', '@target_node']).sort_index()
+    new_edges['r'] = based_on
+    new_edges = new_edges.reset_index()
+    sorted_by_conductance = new_edges.sort_values('conductance', ascending=False)
+    sorted_by_r = new_edges.sort_values('r', ascending=False)
+    synaptic_parameters = [c for c in sorted_by_r if c not in ['r', '@source_node', '@target_node']]
+    sorted_by_r[synaptic_parameters] = sorted_by_conductance[synaptic_parameters].values
+    return sorted_by_r.sort_values(['@target_node', '@source_node'])
 
 
 def _retrieve_synapse_properties(prev_edges, prev_pairs, new_pairs):
