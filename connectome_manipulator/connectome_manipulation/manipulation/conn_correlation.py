@@ -85,19 +85,23 @@ def _calculate_response_correlation(activity, pairs):
 
 def _rewire_based_on_rcorr(prev_edges, rcorr, n_appositions, delay_model, struct_edges):
     previous_conns = _collapse_connections(prev_edges)
-    rcorr_by_appositions = rcorr.groupby(n_appositions)
+    # rcorr_by_appositions = rcorr.groupby(n_appositions)
     log.debug("Reassigning connections")
+    based_on = rcorr * n_appositions
+    bo_by_tgid = based_on.groupby(based_on.index.get_level_values(1))
     out_conns = []
-    print("conns")
-    for n_app, conns in tqdm(previous_conns.groupby(n_appositions)):
-        if not all(conns['nsyn'] <= n_app):
-            print(conns)
-            raise ValueError("structural impossibility")
-
-        connections = _assign_connections(conns, rcorr_by_appositions.get_group(n_app))
-        out_conns.append(connections)
-    print("reassigned connections")
+    for tgid, conns in previous_conns.groupby('@target_node'):
+        out_conns.append(_assign_connections(conns, bo_by_tgid.get_group(tgid)))
     new_connections = pd.concat(out_conns)
+    # for n_app, conns in tqdm(previous_conns.groupby(n_appositions)):
+    #     if not all(conns['nsyn'] <= n_app):
+    #         print(conns)
+    #         raise ValueError("structural impossibility")
+
+    #     connections = _assign_connections(conns, rcorr_by_appositions.get_group(n_app))
+    #     out_conns.append(connections)
+    # print("reassigned connections")
+    # new_connections = pd.concat(out_conns)
 
     log.debug("Reassigning synapse properties")
     new_edges = _retrieve_synapse_properties(
@@ -117,11 +121,12 @@ def _rewire_based_on_rcorr(prev_edges, rcorr, n_appositions, delay_model, struct
 
 
 def _assign_connections(connections, based_on):
-    connections = connections.reset_index().sort_values('nsyn', ascending=False)
+    connections = connections.reset_index().sort_values(['nsyn'], ascending=False)
     connections[['previous_source', 'previous_target']] = connections[
         ['@source_node', '@target_node']
     ].copy()
     based_on = based_on.sort_values(ascending=False)
+    
     to_connect = based_on.iloc[:len(connections)].reset_index()
     connections[['@source_node', '@target_node']] =\
         to_connect[['@source_node', '@target_node']].values

@@ -299,3 +299,22 @@ def test_no_conns(manipulation, tmp_path):
     pd.testing.assert_frame_equal(
         edges_table,
         res)
+
+
+def test_total_in_conductance_conserved(manipulation, tmp_path):
+
+    tgt_ids, nodes, writer, struct_edges_table, constraints_path = _setup(tmp_path)
+    edges_table = writer.to_pandas()
+    manipulation(nodes, writer).apply(
+        tgt_ids,
+        None,
+        struct_edges=struct_edges_table,
+        sel_src={'mtype': 'L4_PC'},
+        sel_dest={'mtype': 'L5_PC'},
+        normalized_rates=constraints_path,
+        **_default_models()
+    )
+    res = writer.to_pandas()
+    assert all(
+        edges_table.groupby('@target_node')['conductance'].sum() ==
+        res.groupby('@target_node')['conductance'].sum())
