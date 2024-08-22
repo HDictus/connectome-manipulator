@@ -40,11 +40,12 @@ def test_structural_placement(manipulation, tmp_path):
         struct_edges_table.drop(columns=['distance_soma', 'branch_order'])
     )
 
-def test_rcorr_rank_equals_connductance_rank(manipulation, tmp_path):
+def test_rcorr_rank_equals_connductance_rank_within_tgid(manipulation, tmp_path):
     tgt_ids, nodes, writer, struct_edges_table, constraints_path = _setup(tmp_path)
     edges_table = writer.to_pandas()
 
-    napp = 3 # to ensure we only check for corr
+    # control structural factor to isolate correlation
+    napp = 3 
     edges_table = remove_large_connections(edges_table, napp)
     struct_edges_table = set_apposition_count(struct_edges_table, napp)
     
@@ -64,13 +65,17 @@ def test_rcorr_rank_equals_connductance_rank(manipulation, tmp_path):
     rcorr = rcorr[napp.index]
     res = writer.to_pandas()
     conductance = res.groupby(['@source_node', '@target_node'])['conductance'].sum()
-    combined = pd.DataFrame({'conductance': conductance, 'rcorr': rcorr})
+
+    
+    
+    combined = pd.DataFrame({'conductance': conductance, 'rcorr': rcorr}).dropna()
+    combined['tgid'] = combined.index.get_level_values(1)
     # we sort by both below to ensure that with reciprocal connections the order is still ok
-    #  the rcorr will be the same for both, and so if we sorted only by rcorr the order could be
-    #  different from conductance even when the sorting is fine
+    #  if two pairs have the same rcorr.
+
     assert all(
-        conductance.sort_values(ascending=False).index ==
-        combined.sort_values(['rcorr', 'conductance'], ascending=False).index[:len(conductance)])
+        combined.sort_values(['tgid', 'conductance']).index ==
+        combined.sort_values(['tgid', 'rcorr', 'conductance']).index)
 
 def set_apposition_count(struct_edges, napp):
     apps = []
