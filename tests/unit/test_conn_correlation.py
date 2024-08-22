@@ -43,11 +43,11 @@ def test_structural_placement(manipulation, tmp_path):
 def test_rcorr_rank_equals_connductance_rank(manipulation, tmp_path):
     tgt_ids, nodes, writer, struct_edges_table, constraints_path = _setup(tmp_path)
     edges_table = writer.to_pandas()
+
     napp = 3 # to ensure we only check for corr
     edges_table = remove_large_connections(edges_table, napp)
-    struct_edges_table = remove_small_connections(
-        remove_large_connections(struct_edges_table, napp),
-        napp)
+    struct_edges_table = set_apposition_count(struct_edges_table, napp)
+    
     writer.from_pandas(edges_table)
     manipulation(nodes, writer).apply(
         tgt_ids,
@@ -64,9 +64,25 @@ def test_rcorr_rank_equals_connductance_rank(manipulation, tmp_path):
     rcorr = rcorr[napp.index]
     res = writer.to_pandas()
     conductance = res.groupby(['@source_node', '@target_node'])['conductance'].sum()
+    combined = pd.DataFrame({'conductance': conductance, 'rcorr': rcorr})
+    # we sort by both below to ensure that with reciprocal connections the order is still ok
+    #  the rcorr will be the same for both, and so if we sorted only by rcorr the order could be
+    #  different from conductance even when the sorting is fine
+    assert all(
+        conductance.sort_values(ascending=False).index ==
+        combined.sort_values(['rcorr', 'conductance'], ascending=False).index[:len(conductance)])
 
-    assert all(conductance.sort_values(ascending=False).index == rcorr.sort_values(ascending=False).index[:len(conductance)])
-
+def set_apposition_count(struct_edges, napp):
+    apps = []
+    for (src, tgt), appositions in struct_edges.groupby(['@target_node', '@source_node']):
+        if len(appositions) < napp:
+            factor = napp / len(appositions) 
+            appositions = pd.concat([appositions] * int(np.ceil(factor)), axis=0)
+        if len(appositions) > napp:
+            appositions = appositions.iloc[:napp]
+        apps.append(appositions)
+    return pd.concat(apps, axis=0).reset_index(drop=True)
+        
 
 def test_one_struct_one_conn(manipulation, tmp_path):
     # TODO: testing this on smaller util methods would be clearer
