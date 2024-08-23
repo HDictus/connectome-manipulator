@@ -87,11 +87,11 @@ def _rewire_based_on_rcorr(prev_edges, rcorr, n_appositions, delay_model, struct
     previous_conns = _collapse_connections(prev_edges)
     # rcorr_by_appositions = rcorr.groupby(n_appositions)
     log.debug("Reassigning connections")
-    based_on = rcorr * n_appositions
+    based_on = rcorr #* n_appositions
     bo_by_tgid = based_on.groupby(based_on.index.get_level_values(1))
     out_conns = []
     for tgid, conns in previous_conns.groupby('@target_node'):
-        out_conns.append(_assign_connections(conns, bo_by_tgid.get_group(tgid)))
+        out_conns.append(_assign_connections(conns, bo_by_tgid.get_group(tgid), n_appositions))
     new_connections = pd.concat(out_conns)
     # for n_app, conns in tqdm(previous_conns.groupby(n_appositions)):
     #     if not all(conns['nsyn'] <= n_app):
@@ -120,16 +120,31 @@ def _rewire_based_on_rcorr(prev_edges, rcorr, n_appositions, delay_model, struct
     return new_edges
 
 
-def _assign_connections(connections, based_on):
+def _assign_connections(connections, based_on, n_appositions):
+    num_conns = len(connections)
     connections = connections.reset_index().sort_values(['nsyn'], ascending=False)
     connections[['previous_source', 'previous_target']] = connections[
         ['@source_node', '@target_node']
     ].copy()
     based_on = based_on.sort_values(ascending=False)
+
+    matched = []
+    possible_connections = connections['nsyn']
+    for (pre, post), value in based_on.items():
+        if len(possible_connections) == 0:
+            break
+        n_app = n_appositions[(pre, post)]
+        i = 0
+        for j, nsyn in possible_connections.items():
+            if nsyn <= n_app:
+                matched.append({'index': j, '@source_node': pre, '@target_node': post})
+                possible_connections = possible_connections.drop(j)
+                break
     
-    to_connect = based_on.iloc[:len(connections)].reset_index()
+    to_connect = pd.DataFrame(matched).set_index('index')
     connections[['@source_node', '@target_node']] =\
-        to_connect[['@source_node', '@target_node']].values
+        to_connect[['@source_node', '@target_node']]
+    assert(len(connections) == num_conns)
     return connections
 
 
@@ -138,10 +153,11 @@ def _shift_synapses(new_edges, based_on):
     new_edges = new_edges.set_index(['@source_node', '@target_node']).sort_index()
     new_edges['r'] = based_on
     new_edges = new_edges.reset_index()
-    sorted_by_conductance = new_edges.sort_values('conductance', ascending=False)
-    sorted_by_r = new_edges.sort_values('r', ascending=False)
+    sorted_by_conductance = new_edges.sort_values(['@target_node', 'conductance'], ascending=False)
+    sorted_by_r = new_edges.sort_values(['@target_node', 'r'], ascending=False)
     synaptic_parameters = [c for c in sorted_by_r if c not in ['r', '@source_node', '@target_node']]
     sorted_by_r[synaptic_parameters] = sorted_by_conductance[synaptic_parameters].values
+
     return sorted_by_r.sort_values(['@target_node', '@source_node'])
 
 

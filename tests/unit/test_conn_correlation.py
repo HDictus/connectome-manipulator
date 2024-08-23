@@ -113,8 +113,8 @@ def test_one_struct_one_conn(manipulation, tmp_path):
     )
 
     
-
-def test_only_creates_structurally_viable(manipulation, tmp_path):
+@pytest.mark.parametrize('exc_num', range(20))
+def test_only_creates_structurally_viable(manipulation, tmp_path, exc_num):
 
     tgt_ids, nodes, writer, struct_edges_table, constraints_path = _setup(tmp_path)
     min_nsyn = 2
@@ -133,9 +133,8 @@ def test_only_creates_structurally_viable(manipulation, tmp_path):
     )
     res = writer.to_pandas()
     napp = struct_edges_table.assign(napp=1).groupby(['@source_node', '@target_node'])['napp'].sum()
-    pairs = res.set_index(['@source_node', '@target_node']).index
-    for k, v in pairs:
-        assert napp[(k, v)] >= min_nsyn
+    nsyn = res.assign(nsyn=1).groupby(['@source_node', '@target_node'])['nsyn'].sum()
+    assert all(napp[nsyn.index] >= nsyn)
 
 
 def remove_small_connections(edges, min_nsyn):
@@ -300,8 +299,11 @@ def test_no_conns(manipulation, tmp_path):
         edges_table,
         res)
 
-
-def test_total_in_conductance_conserved(manipulation, tmp_path):
+# TODO: we can probably address this flakiness if we use finer-grained testing
+#   or mocking 
+#   that lets us set the rcorr direclty
+@pytest.mark.parametrize('exc_num', range(20))
+def test_total_in_conductance_conserved(manipulation, tmp_path, exc_num):
 
     tgt_ids, nodes, writer, struct_edges_table, constraints_path = _setup(tmp_path)
     edges_table = writer.to_pandas()
@@ -315,6 +317,6 @@ def test_total_in_conductance_conserved(manipulation, tmp_path):
         **_default_models()
     )
     res = writer.to_pandas()
-    assert all(
-        edges_table.groupby('@target_node')['conductance'].sum() ==
+    assert np.allclose(
+        edges_table.groupby('@target_node')['conductance'].sum(),
         res.groupby('@target_node')['conductance'].sum())
