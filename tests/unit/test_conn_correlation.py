@@ -40,7 +40,8 @@ def test_structural_placement(manipulation, tmp_path):
         struct_edges_table.drop(columns=['distance_soma', 'branch_order'])
     )
 
-def test_rcorr_rank_equals_connductance_rank_within_tgid(manipulation, tmp_path):
+@pytest.mark.parametrize("struct_constraint", ["min", "max"])
+def test_rcorr_rank_equals_connductance_rank_within_tgid(manipulation, tmp_path, struct_constraint):
     tgt_ids, nodes, writer, struct_edges_table, constraints_path = _setup(tmp_path)
     edges_table = writer.to_pandas()
 
@@ -57,6 +58,7 @@ def test_rcorr_rank_equals_connductance_rank_within_tgid(manipulation, tmp_path)
         sel_src={},
         sel_dest={},
         normalized_rates=constraints_path,
+        structural_constraint=struct_constraint,
         **_default_models()
     )
     activity = pd.read_feather(constraints_path)
@@ -77,6 +79,8 @@ def test_rcorr_rank_equals_connductance_rank_within_tgid(manipulation, tmp_path)
         combined.sort_values(['tgid', 'conductance']).index ==
         combined.sort_values(['tgid', 'rcorr', 'conductance']).index)
 
+
+    
 def set_apposition_count(struct_edges, napp):
     apps = []
     for (src, tgt), appositions in struct_edges.groupby(['@target_node', '@source_node']):
@@ -89,7 +93,8 @@ def set_apposition_count(struct_edges, napp):
     return pd.concat(apps, axis=0).reset_index(drop=True)
         
 
-def test_one_struct_one_conn(manipulation, tmp_path):
+@pytest.mark.parametrize("struct_constraint", ["min", "max"])
+def test_one_struct_one_conn(manipulation, tmp_path, struct_constraint):
     # TODO: testing this on smaller util methods would be clearer
     tgt_ids, nodes, writer, struct_edges_table, constraints_path = _setup(tmp_path)
     edges_table = writer.to_pandas()
@@ -104,6 +109,7 @@ def test_one_struct_one_conn(manipulation, tmp_path):
         sel_src={},
         sel_dest={},
         normalized_rates=constraints_path,
+        structural_constraint=struct_constraint,
         **_default_models()
     )
     res = writer.to_pandas()
@@ -112,9 +118,11 @@ def test_one_struct_one_conn(manipulation, tmp_path):
         struct_edges_table[['@source_node', '@target_node']]
     )
 
+
     
 @pytest.mark.parametrize('exc_num', range(20))
-def test_only_creates_structurally_viable(manipulation, tmp_path, exc_num):
+@pytest.mark.parametrize("struct_constraint", ["min", "max"])
+def test_only_creates_structurally_viable(manipulation, tmp_path, exc_num, struct_constraint):
 
     tgt_ids, nodes, writer, struct_edges_table, constraints_path = _setup(tmp_path)
     min_nsyn = 2
@@ -129,6 +137,7 @@ def test_only_creates_structurally_viable(manipulation, tmp_path, exc_num):
         sel_src={},
         sel_dest={},
         normalized_rates=constraints_path,
+        structural_constraint=struct_constraint,
         **_default_models()
     )
     res = writer.to_pandas()
@@ -303,7 +312,8 @@ def test_no_conns(manipulation, tmp_path):
 #   or mocking 
 #   that lets us set the rcorr direclty
 @pytest.mark.parametrize('exc_num', range(20))
-def test_total_in_conductance_conserved(manipulation, tmp_path, exc_num):
+@pytest.mark.parametrize("struct_constraint", ["min", "max"])
+def test_total_in_conductance_conserved(manipulation, tmp_path, exc_num, struct_constraint):
 
     tgt_ids, nodes, writer, struct_edges_table, constraints_path = _setup(tmp_path)
     edges_table = writer.to_pandas()
@@ -314,9 +324,39 @@ def test_total_in_conductance_conserved(manipulation, tmp_path, exc_num):
         sel_src={'mtype': 'L4_PC'},
         sel_dest={'mtype': 'L5_PC'},
         normalized_rates=constraints_path,
+        structural_constraint=struct_constraint,
         **_default_models()
     )
     res = writer.to_pandas()
     assert np.allclose(
         edges_table.groupby('@target_node')['conductance'].sum(),
         res.groupby('@target_node')['conductance'].sum())
+
+
+def test_max_structural_constraint(manipulation, tmp_path):
+    tgt_ids, nodes, writer, struct_edges_table, constraints_path = _setup(tmp_path)
+    edges_table = writer.to_pandas()
+    manipulation(nodes, writer).apply(
+        tgt_ids,
+        None,
+        struct_edges=struct_edges_table,
+        sel_src={'mtype': 'L4_PC'},
+        sel_dest={},
+        normalized_rates=constraints_path,
+        structural_constraint='max',
+        **_default_models()
+    )
+    res = writer.to_pandas()
+    pair = ['@source_node', '@target_node']
+    napp = struct_edges_table.assign(napp=1).groupby(pair)['napp'].sum()
+    nsyn_old = edges_table.assign(nsyn=1).groupby(pair)['nsyn'].sum()
+    nsyn_new = res.assign(nsyn=1).groupby(pair)['nsyn'].sum()
+    combined = pd.DataFrame({
+        'napp': napp,
+        'old': nsyn_old,
+        'new': nsyn_new}).reset_index().fillna(0)
+    grouped = combined.groupby(['@target_node', 'napp'])
+    old_value_counts = grouped['old'].value_counts()
+    new_value_counts = grouped['new'].value_counts()
+
+    assert (old_value_counts == new_value_counts).all()

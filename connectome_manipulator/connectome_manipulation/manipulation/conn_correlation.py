@@ -17,7 +17,8 @@ class ResponseCorrelationRewiring(Manipulation):
               delay_model=None,
               pathway_specs=None,
               sel_src=None,
-              sel_dest=None
+              sel_dest=None,
+              structural_constraint='min',
             ):
 
         log.debug("Loading response correlation")
@@ -43,7 +44,7 @@ class ResponseCorrelationRewiring(Manipulation):
 
         log.debug("Grouping structural and functional connections")
 
-        new_edges = _rewire_based_on_rcorr(prev_edges, rcorr, viable_connections, delay_model, struct_edges)
+        new_edges = _rewire_based_on_rcorr(prev_edges, rcorr, viable_connections, delay_model, struct_edges, structural_constraint=structural_constraint)
 
         all_edges = pd.concat([all_edges[~in_pathway], new_edges])
         all_edges = all_edges.sort_values(['@target_node', '@source_node']).reset_index(drop=True)
@@ -83,15 +84,30 @@ def _calculate_response_correlation(activity, pairs):
         return rcorr.set_index(['@source_node', '@target_node'])['r']
 
 
-def _rewire_based_on_rcorr(prev_edges, rcorr, n_appositions, delay_model, struct_edges):
+def _rewire_based_on_rcorr(prev_edges, rcorr, n_appositions, delay_model, struct_edges, structural_constraint='min'):
+    assert structural_constraint in ('min', 'max')
     previous_conns = _collapse_connections(prev_edges)
     # rcorr_by_appositions = rcorr.groupby(n_appositions)
     log.debug("Reassigning connections")
     based_on = rcorr #* n_appositions
-    bo_by_tgid = based_on.groupby(based_on.index.get_level_values(1))
+
+    if structural_constraint == 'max':
+        gb = ['@target_node', 'napp']
+    else:
+        gb = '@target_node'
+
+    groups = pd.DataFrame(
+        {'napp': n_appositions},
+        index=n_appositions.index
+    )
+    grouper = pd.concat([
+        pd.Series(i, index=group.index)
+        for i, (_, group) in enumerate(groups.groupby(gb))], axis=0)
+
+    bo_by_tgid = based_on.groupby(grouper)
     out_conns = []
-    for tgid, conns in previous_conns.groupby('@target_node'):
-        out_conns.append(_assign_connections(conns, bo_by_tgid.get_group(tgid), n_appositions))
+    for group, conns in previous_conns.groupby(grouper):
+        out_conns.append(_assign_connections(conns, bo_by_tgid.get_group(group), n_appositions, structural_constraint=structural_constraint))
     new_connections = pd.concat(out_conns)
     # for n_app, conns in tqdm(previous_conns.groupby(n_appositions)):
     #     if not all(conns['nsyn'] <= n_app):
@@ -120,7 +136,7 @@ def _rewire_based_on_rcorr(prev_edges, rcorr, n_appositions, delay_model, struct
     return new_edges
 
 
-def _assign_connections(connections, based_on, n_appositions):
+def _assign_connections(connections, based_on, n_appositions, structural_constraint='min'):
     num_conns = len(connections)
     connections = connections.reset_index().sort_values(['nsyn'], ascending=False)
     connections[['previous_source', 'previous_target']] = connections[
@@ -130,20 +146,24 @@ def _assign_connections(connections, based_on, n_appositions):
 
     matched = []
     possible_connections = connections['nsyn']
-    for (pre, post), value in based_on.items():
-        if len(possible_connections) == 0:
-            break
-        n_app = n_appositions[(pre, post)]
-        i = 0
-        for j, nsyn in possible_connections.items():
-            if nsyn <= n_app:
-                matched.append({'index': j, '@source_node': pre, '@target_node': post})
-                possible_connections = possible_connections.drop(j)
+    if structural_constraint == 'max':
+        to_connect = based_on.reset_index()[['@source_node', '@target_node']].values[:len(connections)]
+        connections[['@source_node', '@target_node']] = to_connect
+    else:
+        for (pre, post), value in based_on.items():
+            if len(possible_connections) == 0:
                 break
+            n_app = n_appositions[(pre, post)]
+            i = 0
+            for j, nsyn in possible_connections.items():
+                if nsyn <= n_app:
+                    matched.append({'index': j, '@source_node': pre, '@target_node': post})
+                    possible_connections = possible_connections.drop(j)
+                    break
     
-    to_connect = pd.DataFrame(matched).set_index('index')
-    connections[['@source_node', '@target_node']] =\
-        to_connect[['@source_node', '@target_node']]
+        to_connect = pd.DataFrame(matched).set_index('index')
+        connections[['@source_node', '@target_node']] =\
+            to_connect[['@source_node', '@target_node']]
     assert(len(connections) == num_conns)
     return connections
 
