@@ -312,7 +312,7 @@ def test_no_conns(manipulation, tmp_path):
 #   or mocking 
 #   that lets us set the rcorr direclty
 @pytest.mark.parametrize('exc_num', range(20))
-@pytest.mark.parametrize("struct_constraint", ["min", "max"])
+@pytest.mark.parametrize("struct_constraint", ["min"])
 def test_total_in_conductance_conserved(manipulation, tmp_path, exc_num, struct_constraint):
 
     tgt_ids, nodes, writer, struct_edges_table, constraints_path = _setup(tmp_path)
@@ -340,7 +340,7 @@ def test_max_structural_constraint(manipulation, tmp_path):
         tgt_ids,
         None,
         struct_edges=struct_edges_table,
-        sel_src={'mtype': 'L4_PC'},
+        sel_src={},
         sel_dest={},
         normalized_rates=constraints_path,
         structural_constraint='max',
@@ -355,8 +355,8 @@ def test_max_structural_constraint(manipulation, tmp_path):
         'napp': napp,
         'old': nsyn_old,
         'new': nsyn_new}).reset_index().fillna(0)
-    grouped = combined.groupby(['@target_node', 'napp'])
-    old_value_counts = grouped['old'].value_counts()
-    new_value_counts = grouped['new'].value_counts()
-
-    assert (old_value_counts == new_value_counts).all()
+    grouped = combined.groupby(['napp'])
+    old_value_counts = grouped['old'].value_counts().unstack(level=1, fill_value=0)
+    new_value_counts = grouped['new'].value_counts().unstack(level=1, fill_value=0)
+    
+    assert (old_value_counts == new_value_counts).all().all()

@@ -66,8 +66,9 @@ def _determine_structurally_viable(struct_edges, prev_edges):
 
 
 def _calculate_response_correlation(activity, pairs):
+    """Activity must be centered and normalized."""
     print("rcorr")
-    for _ in tqdm(range(1)):
+    for _ in range(1):
         other_columns = [c for c in activity.reset_index().columns if c not in ['gid', 'rate']]
         pivoted = activity.fillna(0).reset_index().pivot_table(
             values='rate',
@@ -86,29 +87,42 @@ def _calculate_response_correlation(activity, pairs):
 
 def _rewire_based_on_rcorr(prev_edges, rcorr, n_appositions, delay_model, struct_edges, structural_constraint='min'):
     assert structural_constraint in ('min', 'max')
-    previous_conns = _collapse_connections(prev_edges)
+    previous_conns = _collapse_connections(prev_edges).sort_values('nsyn', ascending=False)
     # rcorr_by_appositions = rcorr.groupby(n_appositions)
     log.debug("Reassigning connections")
     based_on = rcorr #* n_appositions
 
     if structural_constraint == 'max':
-        gb = ['@target_node', 'napp']
+        groups = pd.DataFrame({'r': rcorr}).sort_values(
+            ['@target_node', 'r']).groupby('@target_node')
+        rank_in_tgid = pd.DataFrame(
+            {'pct': (groups.cumcount() / (groups['r'].count()-1)),
+             'r': rcorr}).sort_values(['pct', 'r'], ascending=False)
+
+        rank_by_napp = rank_in_tgid['r'].groupby(n_appositions)
+        out_conns = []
+        for napp, conns in previous_conns.groupby(n_appositions):
+
+            out_conns.append(
+                _assign_connections(conns, rank_by_napp.get_group(napp), n_appositions, 'max')
+            )
     else:
         gb = '@target_node'
 
-    groups = pd.DataFrame(
-        {'napp': n_appositions},
-        index=n_appositions.index
-    )
-    grouper = pd.concat([
-        pd.Series(i, index=group.index)
-        for i, (_, group) in enumerate(groups.groupby(gb))], axis=0)
+        groups = pd.DataFrame(
+            {'napp': n_appositions},
+            index=n_appositions.index
+        )
+        grouper = pd.concat([
+            pd.Series(i, index=group.index)
+            for i, (_, group) in enumerate(groups.groupby(gb))], axis=0)
 
-    bo_by_tgid = based_on.groupby(grouper)
-    out_conns = []
-    for group, conns in previous_conns.groupby(grouper):
-        out_conns.append(_assign_connections(conns, bo_by_tgid.get_group(group), n_appositions, structural_constraint=structural_constraint))
+        bo_by_tgid = based_on.sort_values(ascending=False).groupby(grouper)
+        out_conns = []
+        for group, conns in previous_conns.groupby(grouper):
+            out_conns.append(_assign_connections(conns, bo_by_tgid.get_group(group), n_appositions, structural_constraint=structural_constraint))
     new_connections = pd.concat(out_conns)
+
     # for n_app, conns in tqdm(previous_conns.groupby(n_appositions)):
     #     if not all(conns['nsyn'] <= n_app):
     #         print(conns)
@@ -138,18 +152,20 @@ def _rewire_based_on_rcorr(prev_edges, rcorr, n_appositions, delay_model, struct
 
 def _assign_connections(connections, based_on, n_appositions, structural_constraint='min'):
     num_conns = len(connections)
-    connections = connections.reset_index().sort_values(['nsyn'], ascending=False)
+    connections = connections.reset_index()#.sort_values(['nsyn'], ascending=False)
     connections[['previous_source', 'previous_target']] = connections[
         ['@source_node', '@target_node']
     ].copy()
-    based_on = based_on.sort_values(ascending=False)
+    #based_on = based_on.sort_values(ascending=False)
 
-    matched = []
-    possible_connections = connections['nsyn']
     if structural_constraint == 'max':
+        # import pdb; pdb.set_trace()
         to_connect = based_on.reset_index()[['@source_node', '@target_node']].values[:len(connections)]
         connections[['@source_node', '@target_node']] = to_connect
     else:
+        matched = []
+        possible_connections = connections['nsyn']
+
         for (pre, post), value in based_on.items():
             if len(possible_connections) == 0:
                 break
@@ -193,7 +209,7 @@ def _place_synapses_from_structural(new_edges, structural_edges, new_connections
     struct_by_nsyn = structural_edges.set_index(['@source_node', '@target_node']).groupby(new_connections['nsyn'])
     edges_by_nsyn = new_edges.set_index(['@source_node', '@target_node']).sort_index()
     out = []
-    for nsyn, edges in tqdm(edges_by_nsyn.groupby(new_connections['nsyn'])):
+    for nsyn, edges in edges_by_nsyn.groupby(new_connections['nsyn']):
         struct = struct_by_nsyn.get_group(nsyn).reset_index()
         struct_edges = struct.groupby(['@source_node', '@target_node']).sample(n=int(nsyn)).set_index(['@source_node', '@target_node']).sort_index()
         edges = edges.sort_index()
