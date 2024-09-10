@@ -10,6 +10,8 @@ import neurom as nm
 import numpy as np
 from numpy.testing import assert_array_equal
 import pandas as pd
+from pathlib import Path
+import pytest
 
 from bluepysnap import Circuit
 from bluepysnap.morph import MorphHelper
@@ -1380,3 +1382,77 @@ def test_apply(manipulation):
         res_syn = get_syn(res, src_ids_sel, tgt_ids)  # synaptome
         assert_array_equal(res_syn, syn_model.apply(src_nid=src_ids_sel, tgt_nid=tgt_ids))
         check_pos(syn_pos, res, nodes, syn_class)
+
+
+def test_structural_placement(manipulation, tmp_path):
+
+    tgt_ids, nodes, writer, struct_edges_table = _setup(tmp_path)
+    manipulation(nodes, writer).apply(
+        tgt_ids,
+        'EXC',
+        keep_indegree=True,
+        reuse_conns=True,
+        struct_edges=struct_edges_table,
+        sel_src={'mtype': 'L4_PC'},
+        sel_dest={'mtype': 'L5_PC'},
+        syn_pos_mode='structural',
+        **_default_models()
+    )
+    res = writer.to_pandas()
+    src_nodes = nodes[0].ids({'mtype': 'L4_PC'})
+    tgt_nodes = nodes[1].ids({'mtype': 'L5_PC'})
+    rewired_edges = res[
+        np.logical_and(
+            np.isin(res['@source_node'], src_nodes),
+            np.isin(res['@target_node'], tgt_nodes)
+        )]
+    assert _edges_are_subset(
+        rewired_edges,
+        struct_edges_table.drop(columns=['distance_soma', 'branch_order'])
+    )
+
+    
+
+def _setup(tmp_path):
+    log.setup_logging()
+    c = Circuit(Path(TEST_DATA_DIR, "circuit_sonata.json"))
+
+    edges = c.edges[c.edges.population_names[0]]
+    nodes = [edges.source, edges.target]
+    tgt_ids = nodes[1].ids()
+    edges_table = edges.afferent_edges(tgt_ids, properties=edges.property_names)
+    edges_table = edges_table.sort_values('@target_node').reset_index(drop=True)
+
+    struct_config = Path(TEST_DATA_DIR, "circuit_sonata_struct.json")
+    struct_edges_table = _load_struct_edges(struct_config)
+    writer = EdgeWriter(None, edges_table.copy())
+    return tgt_ids, nodes, writer, struct_edges_table
+
+
+def _load_struct_edges(struct_config):
+    c = Circuit(struct_config)
+    edges = c.edges[c.edges.population_names[0]]
+    return edges.afferent_edges(edges.target.ids(), properties=edges.property_names)
+
+
+def _edges_are_subset(result, superset):
+    super = superset.set_index(list(superset.columns)).index
+    sub = result.set_index((list(superset.columns))).index
+    return len(sub.difference(super)) == 0
+
+
+def _default_models():
+    return {
+        # 'props_model_spec': {'file': os.path.join(
+        #     TEST_DATA_DIR, f"model_config__ConnProps.json")},  # Deterministic connection properties model w/o variation
+        'prob_model_spec': {'file': os.path.join(TEST_DATA_DIR, "model_config__ConnProb1p0.json")}, # 
+        "delay_model_spec": {
+            "model": "LinDelayModel",
+            "delay_mean_coeff_a": 0.1, # base delay for release of transmitter
+            "delay_mean_coeff_b": 1/300, # delay per um3 axon
+            "delay_std": 0,
+            "delay_min": 0.1
+
+        }
+    }
+

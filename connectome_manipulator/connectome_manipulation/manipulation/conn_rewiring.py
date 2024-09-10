@@ -97,6 +97,7 @@ class ConnectomeRewiring(MorphologyCachingManipulation):
         keep_conns=False,
         rewire_mode=None,
         syn_pos_mode="reuse",
+        struct_edges=None,
         syn_pos_model_spec=None,
         morph_ext="swc",
     ):
@@ -148,10 +149,10 @@ class ConnectomeRewiring(MorphologyCachingManipulation):
                 keep_indegree is False,
                 f'"keep_indegree" not supported for rewire mode "{rewire_mode}"!',
             )
-
+        syn_pos_modes = ["reuse", "reuse_strict", "random", "external", "structural"]
         log.log_assert(
-            syn_pos_mode in ["reuse", "reuse_strict", "random", "external"],
-            f'Synapse position mode "{syn_pos_mode}" not supported (must be "reuse", "reuse_strict", "random", or "external")!',
+            syn_pos_mode in syn_pos_modes,
+            f'Synapse position mode "{syn_pos_mode}" not supported (must be one of {syn_pos_modes})!',
         )
 
         if keep_indegree and reuse_conns:
@@ -160,8 +161,8 @@ class ConnectomeRewiring(MorphologyCachingManipulation):
                 'No generation method required for "keep_indegree" and "reuse_conns" options!',
             )
             log.log_assert(
-                syn_pos_mode in ["reuse", "reuse_strict"],
-                '"reuse[_strict]" synapse position mode required when using "keep_indegree" and "reuse_conns" options!',
+                syn_pos_mode in ["reuse", "reuse_strict", "structural"],
+                '"reuse[_strict]" or "structural" synapse position mode required when using "keep_indegree" and "reuse_conns" options!',
             )
         else:
             log.log_assert(
@@ -225,8 +226,15 @@ class ConnectomeRewiring(MorphologyCachingManipulation):
             )
             nsynconn_model = None
 
-        # Load synapse position model [required for "external" position mode]
+            
+        if syn_pos_mode == 'structural':
+            log.log_assert(
+                struct_edges is not None,
+                'Must provide struct_edges for position mode "structural". It contains all potential synapse sites.'
+            )
+            syn_pos_model = None
         if syn_pos_mode == "external":
+            # Load synapse position model [required for "external" position mode]
             log.log_assert(
                 syn_pos_model_spec is not None,
                 f'Synapse position model required for position mode "{syn_pos_mode}"!',
@@ -514,6 +522,7 @@ class ConnectomeRewiring(MorphologyCachingManipulation):
                     nsynconn_model,
                     delay_model,
                     morph,
+                    struct_edges,
                     syn_pos_model,
                 )
                 new_edges_list.append(new_edges)
@@ -787,6 +796,7 @@ class ConnectomeRewiring(MorphologyCachingManipulation):
         nsynconn_model,
         delay_model,
         morph,
+        struct_edges,
         syn_pos_model,
     ):
         """Generates a new set of edges (=synapses), based on the chosen generation options.
@@ -813,9 +823,12 @@ class ConnectomeRewiring(MorphologyCachingManipulation):
         # pylint: disable=E0601, E0606
         new_edges["@source_node"] = src_gen[syn_conn_idx]
         new_edges["@target_node"] = tgt
-
+        
         # Fill-in synapse positions (in-place)
-        if morph is None and syn_pos_model is None:  # i.e., syn_pos_mode "reuse" or "reuse_strict"
+        import pdb;pdb.set_trace()
+        if struct_edges is not None:
+            _place_synapses_from_structural(new_edges, struct_edges)
+        elif morph is None and syn_pos_model is None:  # i.e., syn_pos_mode "reuse" or "reuse_strict"
             # Duplicate synapse positions on target neuron
             self._reuse_synapse_positions(
                 new_edges, edges_table, syn_sel_idx_reuse, syn_conn_idx, tgt
@@ -1124,3 +1137,17 @@ class ConnectomeRewiring(MorphologyCachingManipulation):
 
         # Assign to edges_table (in-place)
         edges_table.loc[syn_sel_idx, "delay"] = delay_new
+
+
+
+def _place_synapses_from_structural(new_edges, structural_edges, new_connections):
+    new_connections = new_edges.assign(nsyn=1).groupby('@source_node', '@target_node')[['nsyn']].sum()
+    struct_by_nsyn = structural_edges.set_index(['@source_node', '@target_node']).groupby(new_connections['nsyn'])
+    edges_by_nsyn = new_edges.set_index(['@source_node', '@target_node']).sort_index()
+    out = []
+    for nsyn, edges in edges_by_nsyn.groupby(new_connections['nsyn']):
+        struct = struct_by_nsyn.get_group(nsyn).reset_index()
+        struct_edges = struct.groupby(['@source_node', '@target_node']).sample(n=int(nsyn)).set_index(['@source_node', '@target_node']).sort_index()
+        edges = edges.sort_index()
+        new_edges.loc[edges['index'], struct_edges.columns] = struct_edges.values
+    return 
